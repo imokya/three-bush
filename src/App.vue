@@ -1,16 +1,32 @@
 <script setup lang="ts">
-import * as THREE from "three";
+import { onMounted } from "vue";
+import * as THREE from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
 import { VertexNormalsHelper } from "three/addons/helpers/VertexNormalsHelper.js";
-import gsap from "gsap";
+import Stats from "three/addons/libs/stats.module.js";
+import {
+  texture,
+  time,
+  vec3,
+  sin,
+  uv,
+  mod,
+  positionWorld,
+  positionLocal,
+} from "three/tsl";
 
 let scene: THREE.Scene,
   camera: THREE.PerspectiveCamera,
-  renderer: THREE.WebGLRenderer;
+  renderer: THREE.WebGPURenderer;
 
 let controls: OrbitControls;
 let bushes: THREE.Object3D[] = [];
+let dummy = new THREE.Object3D();
+let instancedMesh: THREE.InstancedMesh;
+let stats: Stats;
+const rows = 10;
+const cols = 10;
 
 const createScene = () => {
   scene = new THREE.Scene();
@@ -18,33 +34,54 @@ const createScene = () => {
     35,
     window.innerWidth / window.innerHeight,
     0.1,
-    100
+    500
   );
-  camera.position.set(0, 0, 10);
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  camera.position.set(0, 30, 30);
+
+  renderer = new THREE.WebGPURenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  // renderer.toneMapping = THREE.ACESFilmicToneMapping;
-
+  renderer.setAnimationLoop(render);
+  renderer.setClearColor(new THREE.Color(0x000000));
   document.body.appendChild(renderer.domElement);
+
+  stats = new Stats();
+  document.body.appendChild(stats.dom);
 };
 
 const updateBushes = () => {
-  for (let bush of bushes) {
-    const bushPos = new THREE.Vector3(0, 0, 1);
-    const cameraPos = camera.position.clone().setY(0);
-    const angle = bushPos.angleTo(cameraPos);
-    bushPos.cross(cameraPos);
-    const toAngle = bushPos.y < 0 ? -angle : angle;
-    bush.rotation.y = toAngle;
+  // for (let bush of bushes) {
+  //   const bushPos = new THREE.Vector3(0, 0, 1);
+  //   const cameraPos = camera.position.clone().setY(0);
+  //   const angle = bushPos.angleTo(cameraPos);
+  //   bushPos.cross(cameraPos);
+  //   const toAngle = bushPos.y < 0 ? -angle : angle;
+  //   bush.rotation.y = toAngle;
+  // }
+  let index = 0;
+
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      dummy.position.set(i * 3 - rows * 1.5, 0, j * 3 - cols * 1.5);
+      dummy.updateMatrix();
+
+      const bushPos = new THREE.Vector3(0, 0, 1);
+      const cameraPos = camera.position.clone().setY(0);
+      const angle = bushPos.angleTo(cameraPos);
+      bushPos.cross(cameraPos);
+      const toAngle = bushPos.y < 0 ? -angle : angle;
+      dummy.rotation.y = toAngle;
+
+      instancedMesh.setMatrixAt(index++, dummy.matrix);
+    }
   }
 };
 
 const render = () => {
   updateBushes();
   controls.update();
-  renderer.render(scene, camera);
-  requestAnimationFrame(render);
+  renderer.renderAsync(scene, camera);
+  stats.update();
 };
 
 const onResize = () => {
@@ -61,20 +98,24 @@ const createListener = () => {
 
 const createControls = () => {
   controls = new OrbitControls(camera, renderer.domElement);
+
+  controls.maxPolarAngle = Math.PI / 2;
+  controls.minPolarAngle = Math.PI / 4;
+  controls.enablePan = false;
+  controls.enableDamping = true;
 };
 
 const createFog = () => {
-  const fog = new THREE.Fog(new THREE.Color(0x000000), 0.01, 50);
-  scene.fog = fog;
+  scene.fog = new THREE.Fog(new THREE.Color(0x000000), 0.1, 150);
 };
 
 const createHelper = () => {
-  const helper = new THREE.GridHelper(100, 100);
+  const helper = new THREE.GridHelper(200, 200);
   scene.add(helper);
 };
 
 const createBush = () => {
-  const count = 180;
+  const count = 120;
   const planes: THREE.PlaneGeometry[] = [];
   for (let i = 0; i < count; i++) {
     const plane = new THREE.PlaneGeometry(1, 1);
@@ -115,33 +156,59 @@ const createBush = () => {
 
   const matcap = new THREE.TextureLoader().load("assets/matcap.png");
   matcap.colorSpace = THREE.SRGBColorSpace;
-
   const alphaMap = new THREE.TextureLoader().load("assets/alpha.png");
+  const perlinTexture = new THREE.TextureLoader().load("assets/perlin.png");
 
-  const material = new THREE.MeshMatcapMaterial({
+  const material = new THREE.MeshMatcapNodeMaterial({
     matcap: matcap,
-    alphaTest: 0.01,
+    alphaTest: 0.1,
     alphaMap,
-    //side: THREE.DoubleSide,
   });
 
+  const perlinUv = mod(positionWorld.xz.mul(0.2).add(sin(time.mul(0.05))), 1);
+  const perlinColor = texture(perlinTexture, perlinUv)
+    .sub(0.5)
+    .mul(positionWorld.y);
+
+  material.positionNode = positionLocal.add(
+    vec3(perlinColor.r, 0, perlinColor.r)
+  );
+
   let geometry = BufferGeometryUtils.mergeGeometries(planes, true);
-  const mesh = new THREE.Mesh(geometry, material);
+  // const mesh = new THREE.Mesh(geometry, material);
+  // mesh.position.copy(pos);
 
   // 查看normal
   // const vetexHelper = new VertexNormalsHelper(mesh, 0.2, 0x00ff00);
   // scene.add(vetexHelper);
-  bushes.push(mesh);
-  scene.add(mesh);
+
+  instancedMesh = new THREE.InstancedMesh(geometry, material, rows * cols);
+
+  scene.add(instancedMesh);
 };
 
-createScene();
-createFog();
-createControls();
-createListener();
-createBush();
-createHelper();
-render();
+const createBushes = () => {
+  // for (let i = 0; i < 10; i++) {
+  //   for (let j = 0; j < 10; j++) {
+  //     const x = i * 3 - 15;
+  //     const z = j * 3 - 15;
+  //     const position = new THREE.Vector3(x, 0.5, z);
+  //     const delay = Math.random() * 2;
+  //     createBush(position, delay);
+  //   }
+  // }
+  createBush();
+};
+
+onMounted(() => {
+  createScene();
+  createFog();
+  createControls();
+  createListener();
+  createBushes();
+  createHelper();
+  render();
+});
 </script>
 
 <template></template>
