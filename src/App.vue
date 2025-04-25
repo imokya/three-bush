@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
 import { VertexNormalsHelper } from "three/addons/helpers/VertexNormalsHelper.js";
+import gsap from "gsap";
 
 let scene: THREE.Scene,
   camera: THREE.PerspectiveCamera,
@@ -30,12 +31,17 @@ const createScene = () => {
 
 const updateBushes = () => {
   for (let bush of bushes) {
-    bush.lookAt(camera.position.x, 0, camera.position.z);
+    const bushPos = new THREE.Vector3(0, 0, 1);
+    const cameraPos = camera.position.clone().setY(0);
+    const angle = bushPos.angleTo(cameraPos);
+    bushPos.cross(cameraPos);
+    const toAngle = bushPos.y < 0 ? -angle : angle;
+    bush.rotation.y = toAngle;
   }
 };
 
 const render = () => {
-  // updateBushes();
+  updateBushes();
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(render);
@@ -80,7 +86,7 @@ const createBush = () => {
       Math.PI * Math.random()
     );
     const position = new THREE.Vector3().setFromSpherical(spherical);
-    plane.rotateX(Math.random() * 9999);
+    //  plane.rotateX(Math.random() * 9999);
     plane.rotateY(0);
     plane.rotateZ(Math.random() * 9999);
     const y = position.y < 0 ? 0 : position.y;
@@ -116,7 +122,7 @@ const createBush = () => {
     matcap: matcap,
     alphaTest: 0.01,
     alphaMap,
-    // side: THREE.DoubleSide,
+    //side: THREE.DoubleSide,
   });
 
   let geometry = BufferGeometryUtils.mergeGeometries(planes, true);
